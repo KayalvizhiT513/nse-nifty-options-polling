@@ -1,0 +1,4 @@
+streamlit==1.56.0
+pandas==2.3.3
+streamlit-aggrid==1.2.1.post2
+aiohttp==3.13.5
