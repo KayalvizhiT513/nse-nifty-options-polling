@@ -9,7 +9,10 @@ checkpoints. A browser wake-up workflow visits the app hourly on weekdays.
 Streamlit's option-chain requests returned HTTP 403 even in a fresh session
 with no parallel tasks. A GitHub-hosted runner successfully fetched today's
 option chain in the isolated [NSE access test](../../actions/workflows/test-nse-access.yml).
-This does not yet prove sustained one-second polling on all expiries.
+The subsequent all-expiry one-second test captured initial snapshots, then
+received HTTP 403 within a few polling cycles. Later isolated probes also failed.
+Sustained collection at this load is **not validated**; keep the daily schedule
+disabled until an acceptable polling configuration or data source is verified.
 
 The **Collect Nifty options** workflow runs the same background collector directly
 on GitHub runners, without depending on Streamlit. To configure:

@@ -62,6 +62,8 @@ def main():
         print(json.dumps(status), flush=True)
         if status["last_push_error"]:
             raise SystemExit("Final GitHub checkpoint failed; inspect the previous status")
+        if status["state"].startswith("Paused") or (status.get("access_probe") or {}).get("status") == "failed":
+            raise SystemExit("Sustained collection failed: NSE rejected requests. Any snapshots captured before rejection were checkpointed; do not enable the daily schedule.")
         if not any(row["Saved snapshots"] for row in status["expiries"]):
             raise SystemExit("No new snapshots saved in this session; inspect NSE access probe and market hours")
         if not status["last_push_at"]:
