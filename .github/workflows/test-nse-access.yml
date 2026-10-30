@@ -1,0 +1,22 @@
+name: Test NSE access from GitHub
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: collector
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install 'aiohttp==3.13.5'
+      - name: Test one NSE option-chain request without parallel polling
+        run: python -m collector.probe_nse
