@@ -61,6 +61,13 @@ def render_status(service):
         st.error(f"GitHub checkpoint failed; local files retained. {status['last_push_error']}")
     if status["last_error"]:
         st.warning(f"Most recent collection error: {status['last_error']}")
+    if status["access_probe"]:
+        probe = status["access_probe"]
+        st.caption(f"Single-request cloud test (IST): {probe['at']} · {probe['status']} · no parallel expiry tasks")
+        if probe.get("error"):
+            st.error(f"Single-request result: {probe['error']}")
+        elif probe.get("source_timestamp"):
+            st.caption(f"Test NSE timestamp: {probe['source_timestamp']}")
     if status["expiries"]:
         st.dataframe(status["expiries"], hide_index=True, width="stretch")
     st.caption("Polling targets one request per second per expiry during weekday 09:00–15:45 IST. Fresh NSE timestamps may arrive less often.")

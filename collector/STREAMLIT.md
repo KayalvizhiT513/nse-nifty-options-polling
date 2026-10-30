@@ -54,6 +54,10 @@ only in Streamlit Secrets; the wake-up workflow does not receive it.
   repository handles uploads without changing Streamlit's deployed checkout.
 - Errors rotate across three log files of at most 2 MB each. The UI reports
   request counts, errors, successful snapshot counts and recent p95 timing.
+- Before starting parallel polling, the app tests one option-chain request using
+  a fresh warmed session. If that fails, it pauses full polling and retries the
+  single-request test once per minute. A 403 during polling also pauses the full
+  collector. The Live collector panel shows the isolated test result.
 - Setting `enabled=false` in Secrets and rebooting the app stops collection.
   Set `NIFTY_STREAMLIT_ENABLED=false` to disable scheduled wake-ups.
 

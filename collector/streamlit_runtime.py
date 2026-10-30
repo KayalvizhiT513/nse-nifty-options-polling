@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 from collector.github_archive import git, merge_csv, publish_day
-from collector.nse_poller import IST, NSEPoller
+from collector.nse_poller import IST, NSEPoller, OPTION_CHAIN_URL
 
 
 def market_open(now=None):
@@ -116,9 +116,11 @@ class MeasuredPoller(NSEPoller):
                 stats["latencies"].append(time.monotonic() - started)
                 stats["last_success_at"] = datetime.now(IST).isoformat(timespec="seconds")
             return result
-        except Exception:
+        except Exception as error:
             with self.owner.lock:
                 stats["errors"] += 1
+                if isinstance(error, PermissionError):
+                    self.owner.access_denied = True
             raise
 
     def save_option_chain_rows_if_new_timestamp(self, expiry, payload):
@@ -163,6 +165,8 @@ class CollectorService:
         self.last_push_error = None
         self._finalized = {}
         self.recovery_pending = True
+        self.access_denied = False
+        self.last_access_probe = None
         self.state = "Starting"
         self.heartbeat = None
         self.started_at = datetime.now(IST).isoformat(timespec="seconds")
@@ -226,14 +230,70 @@ class CollectorService:
             message = message.replace(token, "[redacted]")
         return message[-500:]
 
+    async def _probe_access(self):
+        """Exactly one option-chain request, fresh cookies and no expiry tasks."""
+        probe = NSEPoller(str(self.data_root))
+        result = {"at": datetime.now(IST).isoformat(timespec="seconds"), "parallel_tasks": 0}
+        try:
+            await probe.create_session()
+            expiries = await probe.fetch_expiry_list()
+            result["expiry_count"] = len(expiries)
+            if not expiries:
+                raise ValueError("Expiry endpoint returned no expiries")
+            expiry = expiries[0]
+            result["expiry"] = expiry
+            payload = await probe.fetch_json(OPTION_CHAIN_URL.format(expiry=expiry), "single_request_probe", expiry)
+            records = payload.get("records") or {}
+            if not records.get("timestamp") or not records.get("data"):
+                raise ValueError("Option-chain response has no timestamp or rows")
+            result.update(status="success", source_timestamp=records["timestamp"])
+            with self.lock:
+                self.last_access_probe = result
+                self.access_denied = False
+                self.last_error = None
+            return True
+        except Exception as error:
+            result.update(status="failed", error=f"{type(error).__name__}: {self._safe_error(error)}")
+            with self.lock:
+                self.last_access_probe = result
+                self.last_error = f"single_request_probe: {result['error']}"
+            return False
+        finally:
+            await probe.close_session()
+
     async def _schedule(self):
         poller = task = None
+        access_checked = False
+        retry_at = 0.0
         try:
             while not self.stop_event.is_set():
                 now = datetime.now(IST)
                 with self.lock:
                     self.heartbeat = now.isoformat(timespec="seconds")
                 if market_open(now):
+                    if self.access_denied:
+                        if task is not None:
+                            poller.request_stop()
+                            try:
+                                await task
+                            except Exception as error:
+                                with self.lock:
+                                    self.last_error = self._safe_error(error)
+                        task = poller = None
+                        access_checked = False
+                        self.access_denied = False
+                        retry_at = time.monotonic() + 60
+                    if not access_checked:
+                        if time.monotonic() >= retry_at:
+                            with self.lock:
+                                self.state = "Testing one option-chain request without parallel polling"
+                            access_checked = await self._probe_access()
+                            retry_at = time.monotonic() + 60
+                        if not access_checked:
+                            with self.lock:
+                                self.state = "Paused: NSE option-chain access failed; retrying one request per minute"
+                            await asyncio.sleep(1)
+                            continue
                     if task is None or task.done():
                         if task is not None:
                             try:
@@ -246,6 +306,7 @@ class CollectorService:
                     with self.lock:
                         self.state = "Collecting"
                 else:
+                    access_checked = False
                     if task is not None:
                         poller.request_stop()
                         try:
@@ -318,6 +379,7 @@ class CollectorService:
             return {"state": self.state, "heartbeat": self.heartbeat, "started_at": self.started_at,
                 "last_push_at": self.last_push_at, "last_commit": self.last_commit,
                 "last_error": self.last_error, "last_push_error": self.last_push_error,
+                "access_probe": dict(self.last_access_probe) if self.last_access_probe else None,
                 "alive": bool(self.thread and self.thread.is_alive()), "expiries": rows}
 
 
