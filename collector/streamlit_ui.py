@@ -61,8 +61,10 @@ def render_status(service):
         st.error(f"GitHub checkpoint failed; local files retained. {status['last_push_error']}")
     if status["last_error"]:
         st.warning(f"Most recent collection error: {status['last_error']}")
-    if status["access_probe"]:
-        probe = status["access_probe"]
+    probe = status.get("access_probe")
+    if "access_probe" not in status:
+        st.info("This collector was started before the latest update. Reboot the app to load the new access diagnostic.")
+    if probe:
         st.caption(f"Single-request cloud test (IST): {probe['at']} · {probe['status']} · no parallel expiry tasks")
         if probe.get("error"):
             st.error(f"Single-request result: {probe['error']}")
