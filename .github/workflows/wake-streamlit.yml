@@ -1,0 +1,35 @@
+name: Wake Streamlit collector
+
+on:
+  schedule:
+    # 08:41 IST before the collection window, then hourly through 16:41 IST.
+    - cron: '11 3-11 * * 1-5'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wake-streamlit-collector
+  cancel-in-progress: false
+
+jobs:
+  wake:
+    if: github.event_name == 'workflow_dispatch' || vars.NIFTY_STREAMLIT_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      STREAMLIT_APP_URL: ${{ vars.NIFTY_STREAMLIT_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: collector
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install browser automation
+        run: |
+          python -m pip install 'playwright>=1.50,<2'
+          python -m playwright install --with-deps chromium
+      - name: Open Streamlit session and verify collector heartbeat
+        run: python collector/wake_streamlit.py
