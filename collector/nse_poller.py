@@ -102,6 +102,9 @@ class NSEPoller:
         self.session: Optional[aiohttp.ClientSession] = None
         self.http_semaphore = asyncio.Semaphore(MAX_CONCURRENT_HTTP)
         self.reinitialize_lock = asyncio.Lock()
+        self.session_condition = asyncio.Condition()
+        self.session_refreshing = False
+        self.active_requests = 0
         self.last_reinitialize_at = 0.0
         self.stop_event = asyncio.Event()
 
@@ -473,14 +476,16 @@ class NSEPoller:
         """
         NSE often expects a browser-like visit first so cookies get set.
         """
-        assert self.session is not None
+        session = self.session
+        if session is None:
+            raise RuntimeError("Cannot warm up an uninitialized NSE session")
         urls = [
             f"{BASE}/",
             f"{BASE}/option-chain",
         ]
         for url in urls:
             try:
-                async with self.session.get(url) as resp:
+                async with session.get(url) as resp:
                     await resp.text()
             except Exception as e:
                 self.log_error(
@@ -494,20 +499,42 @@ class NSEPoller:
         async with self.reinitialize_lock:
             if time.monotonic() - self.last_reinitialize_at < 10:
                 return
-            self.last_reinitialize_at = time.monotonic()
-            await self.close_session()
-            await asyncio.sleep(1)
-            await self.create_session()
+            async with self.session_condition:
+                self.session_refreshing = True
+                try:
+                    await self.session_condition.wait_for(lambda: self.active_requests == 0)
+                except BaseException:
+                    self.session_refreshing = False
+                    self.session_condition.notify_all()
+                    raise
+            try:
+                await self.close_session()
+                await asyncio.sleep(1)
+                await self.create_session()
+            finally:
+                self.last_reinitialize_at = time.monotonic()
+                async with self.session_condition:
+                    self.session_refreshing = False
+                    self.session_condition.notify_all()
 
     async def fetch_json(self, url: str, source: str, expiry: Optional[str] = None) -> Dict[str, Any]:
-        assert self.session is not None
-
         async with self.http_semaphore:
-            async with self.session.get(url) as resp:
-                if resp.status == 403 and REINIT_SESSION_ON_403:
-                    raise PermissionError("403 from NSE")
-                resp.raise_for_status()
-                return await resp.json(content_type=None)
+            async with self.session_condition:
+                await self.session_condition.wait_for(lambda: not self.session_refreshing)
+                session = self.session
+                if session is None or session.closed:
+                    raise RuntimeError("NSE session is unavailable; initialization or recovery did not complete")
+                self.active_requests += 1
+            try:
+                async with session.get(url) as resp:
+                    if resp.status == 403 and REINIT_SESSION_ON_403:
+                        raise PermissionError("403 from NSE")
+                    resp.raise_for_status()
+                    return await resp.json(content_type=None)
+            finally:
+                async with self.session_condition:
+                    self.active_requests -= 1
+                    self.session_condition.notify_all()
 
     # ---------------- Pollers ----------------
 
