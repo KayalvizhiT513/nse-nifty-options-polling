@@ -14,6 +14,9 @@ received HTTP 403 within a few polling cycles. Later isolated probes also failed
 Sustained collection at this load is **not validated**; keep the daily schedule
 disabled until an acceptable polling configuration or data source is verified.
 
+See [the alternative-feed evaluation](collector/DATA_SOURCES.md) for streaming
+providers that can support one-second capture without website polling.
+
 The **Collect Nifty options** workflow runs the same background collector directly
 on GitHub runners, without depending on Streamlit. To configure:
 

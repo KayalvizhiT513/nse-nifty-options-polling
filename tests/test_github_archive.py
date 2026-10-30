@@ -20,6 +20,32 @@ def snapshot(timestamp, price="100", observed="2026-10-29 09:15:01"):
 
 
 class ExportTests(unittest.TestCase):
+    def test_partial_clone_publishes_without_downloading_historical_blobs(self):
+        def run(*args, cwd):
+            return subprocess.check_output(["git", *args], cwd=cwd, stderr=subprocess.DEVNULL)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            remote, seed, partial = root / "remote.git", root / "seed", root / "partial.git"
+            run("init", "--bare", "--initial-branch=main", str(remote), cwd=root)
+            run("config", "uploadpack.allowFilter", "true", cwd=remote)
+            run("clone", str(remote), str(seed), cwd=root)
+            run("config", "user.name", "Test", cwd=seed)
+            run("config", "user.email", "test@example.com", cwd=seed)
+            (seed / "historical.csv").write_text("historical data that must stay remote\n")
+            run("add", "historical.csv", cwd=seed)
+            run("commit", "-m", "historical", cwd=seed)
+            old_blob = run("rev-parse", "HEAD:historical.csv", cwd=seed).decode().strip()
+            run("push", "origin", "main", cwd=seed)
+            run("clone", "--bare", "--filter=blob:none", "--no-local", remote.as_uri(), str(partial), cwd=root)
+            before = run("rev-list", "--objects", "--all", "--missing=print", cwd=partial).decode()
+            self.assertIn("?" + old_blob, before)
+            path = "reconstructed_2026-10-29/expiry_03-Nov-2026_2026-10-29_option_chain_rows.csv"
+            data = snapshot("29-Oct-2026 09:15:00")
+            publish_day("2026-10-29", {path: [data]}, repository=partial, environment={"GIT_NO_LAZY_FETCH": "1"})
+            self.assertEqual(run("show", f"main:{path}", cwd=remote), data)
+            after = run("rev-list", "--objects", "--all", "--missing=print", cwd=partial).decode()
+            self.assertIn("?" + old_blob, after)
+
 
     def test_merge_overlapping_snapshots_and_retry(self):
         a = snapshot("29-Oct-2026 09:15:00")

@@ -83,7 +83,10 @@ def publish_day(day, files, branch="main", repository=None, environment=None):
                 merged = merge_csv(baseline, snapshots)
                 sha = run("hash-object", "-w", "--stdin", data=merged).decode().strip()
                 run("update-index", "--add", "--cacheinfo", f"100644,{sha},{path}", env=env)
-            tree = run("write-tree", env=env).decode().strip()
+            # Historical blobs remain on origin in this partial clone. Every
+            # added blob was written above; allow unchanged promised blobs so
+            # Git does not lazily download the whole archive while writing a tree.
+            tree = run("write-tree", "--missing-ok", env=env).decode().strip()
             if tree == run("rev-parse", f"{parent}^{{tree}}").decode().strip():
                 commit = parent
             else:
